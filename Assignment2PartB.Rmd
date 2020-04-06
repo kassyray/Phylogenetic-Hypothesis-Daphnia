@@ -4,8 +4,6 @@ output:
   pdf_document: default
   word_document: default
 ---
-##Part B – Applying what we covered in classes and in the example scripts to analyze new datasets (30 marks)
-
 __1. Using the R package rentrez, search for records from the genus Daphnia of the 16S gene in the NCBI nucleotide data base. (Note: For the scope of this assignment, we suggest searching in the title field for the marker name and to exclude whole genomes.) Download the data in FASTA format. Provide your code here as well as the date and time you performed the download.__
 
 ```{r Libraries, message = FALSE}
