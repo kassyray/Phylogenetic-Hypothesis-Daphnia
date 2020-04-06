@@ -1,0 +1,314 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+##Part B – Applying what we covered in classes and in the example scripts to analyze new datasets (30 marks)
+
+__1. Using the R package rentrez, search for records from the genus Daphnia of the 16S gene in the NCBI nucleotide data base. (Note: For the scope of this assignment, we suggest searching in the title field for the marker name and to exclude whole genomes.) Download the data in FASTA format. Provide your code here as well as the date and time you performed the download.__
+
+```{r Libraries, message = FALSE}
+# Read in all libraries 
+library(rentrez)
+library(seqinr)
+library(Biostrings)
+library(stringr)
+library(tidyverse)
+library(ggplot2)
+library(stringi)
+library(ape)
+library(DECIPHER)
+```
+
+```{r Searching}
+# Do the search 
+daphnia_search <- entrez_search(db = "nuccore", term = "Daphnia[Organism] AND 16S[TITL] NOT (genome[TITL])", retmax = 500)
+
+daphnia_search
+summary(daphnia_search)
+
+# Download the data in FASTA format 
+# This was downloaded on Friday October 18, 2019 at 4:39 PM 
+daphnia_fetch <- entrez_fetch(db = "nuccore", id = daphnia_search$ids, rettype = "fasta")
+class(daphnia_fetch)
+```
+
+__2. Convert your downloaded date to a data frame in R. Also, write the original data to hard disk, showing your code here, and keep a copy of the original data, unedited.__
+```{r Question 2}
+# Write the original data to the hard disk 
+# write(daphnia_fetch, "daphnia_fetch.fasta", sep = "\n") 
+
+# Read data back in
+stringSet <- readDNAStringSet("daphnia_fetch.fasta")
+
+# Convert the data into a data frame
+dfDaphnia <- data.frame(Daphnia_Title = names(stringSet), Daphnia_Sequence = paste(stringSet))
+
+# Check to make sure everything worked ok
+class(dfDaphnia) 
+dim(dfDaphnia)
+names(dfDaphnia)
+
+# Remove some items from the global environment for organization
+rm(daphnia_fetch)
+rm(daphnia_search)
+rm(stringSet)
+```
+
+__3. Reformat your data frame such that you have columns as follows: unique identifier (GenBank accession number), species name, gene name, nucleotide sequences, and original sequence labels that came with the download.__
+
+```{r Question 3}
+
+# Create new columns for the gene name, unique identifier and species name 
+dfDaphnia$Gene_Name <- word(dfDaphnia$Daphnia_Title, 5L)
+unique(dfDaphnia$Gene_Name)
+
+# The above didn't work so well because not all rows in the column are gene names. 
+# If my search worked correctly, the gene name should be 16S. I am going to check this with str_detect. 
+str_detect(dfDaphnia$Daphnia_Title, "16S")
+
+# TRUE was returned. That means we have all 16S genes! 
+# Now I am going to search for 16S. I am interested in everything after this substring is found. I want this as the column for gene name in case I want to do more analysis downstream.
+dfDaphnia %>% 
+  separate(Daphnia_Title, sep = "16S", into = c("pre", "post")) %>% 
+  pull("post") -> dfDaphnia$Gene_Name
+
+# More string handling
+dfDaphnia$Gene_Name <- paste0("16S", dfDaphnia$Gene_Name)
+
+# Let's check to make sure that worked ok
+unique(dfDaphnia$Gene_Name)
+
+# Now make columns for the Unique Identifier and Species Name
+dfDaphnia$Unique_Identifier <- word(dfDaphnia$Daphnia_Title, 1L)
+dfDaphnia$Species_Name <- word(dfDaphnia$Daphnia_Title, 2L, 3L)
+
+# Create a new dataframe of the unique identifier, species name, gene name, Daphnia sequence and Daphnia titl 
+dfDaphnia <- dfDaphnia[, c("Unique_Identifier", "Species_Name", "Gene_Name", "Daphnia_Sequence", "Daphnia_Title")]
+
+# Check the columns
+names(dfDaphnia)
+```
+
+__4. How many total sequences do you have? How many unique species do you have? Provide code and the answers here.__
+
+```{r Summaries }
+
+# Total number of sequences equals total number of rows in the dataset 
+dim(dfDaphnia)
+
+# There are 100 sequences in the dataset 
+
+# Find the number of unique species name 
+length(unique(dfDaphnia$Species_Name))
+
+# There are 16 unique species 
+
+# What are the 16 species? 
+unique(dfDaphnia$Species_Name)
+
+# I see here that there is a species name called "5-B7 D."  Good thing I caught that mistake! I will have to do some string handling to make sure that this is corrected. 
+dfDaphnia$Species_Name[c(12)] <- "Daphnia magna"
+
+# Checking to make sure this worked properly
+unique(dfDaphnia$Species_Name)
+```
+
+__5. Perform preliminary data checking. At a minimum, check how many different gene names you have and check the mean, minimum, and maximum sequence length in your dataset. Based upon your answers, do you think you should filter out any data at this point? Why or why not?__
+
+```{r Question 5}
+# Find the number of unique gene names 
+length(unique(dfDaphnia$Gene_Name))
+
+# I have 3 different gene names 
+
+# Find the mean, minimum and maximum sequence length
+dfDaphnia <- dfDaphnia %>% 
+  mutate(SequenceLength = str_length(Daphnia_Sequence)) 
+
+dfDaphnia %>% 
+  summarise(mean(SequenceLength), min(SequenceLength), max(SequenceLength)) 
+
+# Use a histogram to visualize any outliers in the sequence length. This will give me a better idea as to if I would like to filter out any data.
+hist(dfDaphnia$SequenceLength)
+
+```
+
+From this histogram, I see that there are some very long sequences (< 600 nucleotides in length). Because I am doing a multiple sequence alignment (MSA), I don't think that sequences of that large of length would be suitable for this analysis. Therefore, I am going to filter out all sequences that are greater than 600 in length. 
+
+```{r}
+# Maybe I should filter out all sequence lengths that are greater than 600.
+dfDaphnia_400 <- dfDaphnia %>% 
+  filter(SequenceLength < 600)
+
+
+# Check the mean, min and max of the new data 
+dfDaphnia_400 %>% 
+  summarise(mean(SequenceLength), min(SequenceLength), max(SequenceLength))
+
+# Check the number of gene names in the new data 
+length(unique(dfDaphnia_400$Gene_Name))
+
+# Histogram
+hist(dfDaphnia_400$SequenceLength)
+
+# This histogram looks much better! 
+
+```
+
+
+__6. Perform a multiple sequence alignment (MSA). Provide the code, and explain your choice of alignment algorithm and chosen arguments. You may use any R package you wish for the alignment, but explain your choices.__
+ 
+```{r Question 6}
+
+### Do an alignment with the Daphnia 400 data set 
+
+# Convert the sequence data to a DNAStringSet 
+dfDaphnia_400$Daphnia_Sequence <- DNAStringSet(dfDaphnia_400$Daphnia_Sequence)
+
+# Do a check to make sure things worked 
+class(dfDaphnia_400$Daphnia_Sequence)
+
+# I am using a multiple sequence alignment (MSA) using MUSCLE.  An MSA is useful in this analysis because it allows me to align multiple sequences of varying lengths in my datasets simutaneously. MUSCLE or multiple sequence comparison by log expectation is being used here because it is faster than other alignment algorithm and out preforms them in other parameters as well. 
+
+# Preform a preliminary alignment to make sure things run 
+Daphnia.16S.alignment <- DNAStringSet(muscle::muscle(dfDaphnia_400$Daphnia_Sequence, maxiters = 2))
+
+# My arguments for the alignment are as follows: I am using the dfDaphnia_400 data frame and referencing the Daphnia_Sequence column (which is a DNA String Set), using log.tx and setting verbose to TRUE. I am using verbose because this will allow me to see if there were any errors or warnings, and print out the progress of the alignment. I am using log.tx because this specifies that we would like the progress of the alignment printed to a log file called "log.txt". 
+
+# Do an actual alignment, since the preliminary ran as we expected 
+Daphnia.16S.alignment <- DNAStringSet(muscle::muscle(dfDaphnia_400$Daphnia_Sequence, log = "log.txt", verbose = T))
+
+# Check that the alignment worked properly 
+class(Daphnia.16S.alignment)
+```
+
+__7 What is the total sequence length of the first sequence in your alignment?__
+```{r}
+length(Daphnia.16S.alignment[[1]])
+```
+
+__8 On average, how many gaps do you have per sequence in your alignment? What is the minimum and maximum number of gaps among the sequences in your alignment? Is your result expected or surprising? Do you plan to keep all sequences for clustering? Or, will you further check and possibly delete any sequences? (If you delete sequences, with good reason, I would suggest repeating your alignment before the next step. An example of a good reason for filtering could be if you BLAST the sequence and realize that a gene other than 16S has accidentally made its way into your data set.)__
+```{r Question 8 - Mean Gaps}
+# Find mean, or average number of gaps per sequence in alignment 
+mean(unlist(lapply(Daphnia.16S.alignment, str_count, "-")))
+
+```
+On average, I have 117 gaps per sequence in my alignment.
+
+```{r Question 8 - Min & Max Gaps}
+# Find min and max number of gaps among sequences in alignment 
+min(unlist(lapply(Daphnia.16S.alignment, str_count, "-")))
+max(unlist(lapply(Daphnia.16S.alignment, str_count, "-")))
+```
+The minimum and maximum number of gaps among sequences in my alignment is 55 and 171, respectively. 
+My results are not surprising. The minimum and maximum number of gaps can likely be explained based on the variation in the lengths of sequences. The sequences that are smaller in length would have more gaps while those of longer lengths would have less gaps. I am going to use BrowseSeqs below to take a look at my alignment. The minimum number of gaps may be from sequences that don't have gaps at the beginning and end of the sequence but have single mutations, insertions or perhaps unequal crossover in meiosis. 
+
+```{r Question 8 - Browse Seq Alignment}
+# Browse Seqs
+BrowseSeqs(Daphnia.16S.alignment)
+```
+
+After taking a look at the sequence alignment using the Browse Seqs tool I can confirm that there are many gaps at the beginning and the end of the sequences in the alignment. This could be due to primer binding sites. However, there are areas within the alignment where many sequences have gaps. 
+
+```{r Question 8 - Histogram}
+# Use a histogram to look at the distribution of gaps because I like seeing things visually
+gapNum <- data.frame(unlist(lapply(Daphnia.16S.alignment, str_count, "-")))
+
+ggplot(gapNum, aes(x = unlist.lapply.Daphnia.16S.alignment..str_count.......)) + geom_histogram(color="black", fill="white", binwidth = 20)
+```
+
+__9. Cluster your sequences into OTUs (Operational Taxonomic Units). Provide the code, and explain your choice of algorithm and settings.__
+
+```{r Question 9}
+# Change format of data 
+dnaBin.Daphnia.16S <- as.DNAbin(Daphnia.16S.alignment)
+
+# Get distance matrix
+distanceMatrix2 <- dist.dna(dnaBin.Daphnia.16S, model = "TN93", as.matrix = TRUE, pairwise.deletion = TRUE)
+
+# Cluster into operational taxonomic units using IdClusters from the DECIPHER package. 
+clusters.Daphnia.16S <- IdClusters(distanceMatrix2,
+                                   method = "single",
+                                   cutoff= 0.02,
+                                   showPlot = TRUE,
+                                   type = "both",
+                                   verbose = FALSE)
+
+class(clusters.Daphnia.16S)
+length(unique(unlist(clusters.Daphnia.16S[[1]][1])))
+```
+Here, I outline my choice of algorithms and settings. I chose `IdClusters` from the `DECIPHER` package because it allows me to apply single linkage clustering to a distance matrix. I set my clustering according to a 2% divergence clustering threshold using the `cutoff` argument. I was interested in seeing the dendogram so I set the `setplot` argument to `TRUE`; similarly I set `type` to `both` so both the clusters and the dendrogram were outputted. Finally, I set the `verbose` argument to `FALSE` because I did not want the progress to be displayed.
+
+
+__10. Present a visualization of your clusters (such as a dendrogram, although you may feel free to choose a different visualization if you prefer).__
+
+See the dendrogram output above for the visualization of the clusters. 
+
+__11. Provide a comment about whether or not you see any apparent outliers in your dendrogram and whether or not you are choosing to exclude any OTUs from downstream analyses. What are you looking for? And, what is your definition of an outlier? In the case of a severe outlier, I suggest BLASTing the sequence to check for taxonomic misidentifications, contaminations, or inconsistencies in data labeling. (An example of a good reason for excluding data would be if your explorations reveal that one of the 16S sequences is very different from others and if BLAST results suggest it is likely a microorganism eaten by a Daphnia, rather than being a sequence from a Daphnia. We would only exclude data with good reason; i.e. we wouldn’t exclude data that contradict a specific biological hypothesis just because our original hypothesis wasn’t supported. Here, we are building a dataset of Daphnia 16S sequences and are checking whether incorrect sequences have made it into our dataset.)__
+
+I don't believe that there are any outliers in my dendrogram and therefore am chosing to include all OTUs from the downstram analysis. The data is mitochondrial DNA, which is highly conserved, so there should not be a lot of variability in the data. This is represented on the distance scale of the dendrogram where the scale is relatively small (~ 0.06). If the distance scale was greater, it might suggest that there are outliers due to misidentifications, contaminations or inconsistencies in data labeling.
+
+__12. Randomly select one sequence per (remaining) OTU.__
+
+```{r Question 12}
+# First, get data into form where we can actually do this.
+# Here, we will join together the cluster data and the original dfDaphnia_400 dataframe.
+clusters.Daphnia.16S[[1]]
+dfDaphnia2 <- cbind(dfDaphnia_400, clusters.Daphnia.16S[[1]])
+
+# Check to make sure that worked
+names(dfDaphnia2)
+head(dfDaphnia2)
+
+# Factor the cluster column 
+factor(dfDaphnia2$cluster)
+
+# Now randomly select one sequence per OTU
+randomSubsetDaphnia <- dfDaphnia2 %>% 
+  group_by(cluster) %>%
+  sample_n(size = 1)
+
+# Check to make sure that there is only one sequence that was selected per OTU
+randomSubsetDaphnia$cluster
+
+# Write to hard disk for Part C 
+write.csv(randomSubsetDaphnia, "Daphnia16S_RandomSeq_OTU.csv")
+```
+
+__13. Reconstruct the phylogenetic relationships among members of your final sequence dataset. Explain your choice of phylogenetic reconstruction method and settings.__
+```{r Question 13}
+
+# Convert data into a useable foramt for the analysis.
+randomSubsetDaphnia$Daphnia_Sequence <- DNAStringSet(randomSubsetDaphnia$Daphnia_Sequence)
+
+# Preform an alignment based on the data. 
+random.alignment <- DNAStringSet(muscle::muscle(randomSubsetDaphnia$Daphnia_Sequence, log = "log.tx", verbose = T))
+dnaBin.random.alignment <- as.DNAbin(random.alignment)
+
+# Get distance matrix
+distanceMatrix.random <- dist.dna(dnaBin.random.alignment, model = "TN93", as.matrix = TRUE, pairwise.deletion = TRUE)
+
+# I am using neighbour joining for the method of my phylogenetic reconstruction. 
+# This is a distance phylogenetic reconstruction method. 
+phyloRandom <- nj(distanceMatrix.random)
+class(phyloRandom)
+```
+I used the neighbour joining `nj` function from the `ape` package to reconstruct the phylogenetic relationship among the members of my final sequence dataset. I chose this method because it is a well recognized and used method for phylogenetic reconstruction and does not assume that all the lineages evolved at the same rate. At this point in my analysis NJ is sufficient as it is a good preliminary indicator of the quality of the data. 
+
+I first ran an alignment based on the data, calculated a distance matrix, as in the previous questions and finally used NJ. I only used the distance matrix as the argument as this is the only argument that the NJ command takes. 
+
+__14. Present a visualization of your phylogenetic hypothesis.__
+
+```{r Question 14}
+
+#Plot the phylogeny 
+plot(phyloRandom)
+names(phyloRandom)
+phyloRandom$Nnode
+```
+
+__15. Provide a comment about the appearance of your phylogeny. For example, does your tree display a symmetrical or asymmetrical topology? Do you draw any conclusions about diversity or diversification in the genus Daphnia from your visualization__
+
+The tree displays assymetrical topology. The nodes on the phylogenetic tree represent diversification events in the evolution of Daphnia. There are 15 nodes represented in this tree, indicating that there were 15 diversification events, or events of species divergence from a common ancestor. 
